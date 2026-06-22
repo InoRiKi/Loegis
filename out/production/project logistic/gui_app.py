@@ -1,0 +1,194 @@
+import tkinter as tk
+import customtkinter as ctk
+from tkintermapview import TkinterMapView
+import subprocess
+import json
+import os
+
+# ตั้งค่าธีมโปรแกรมให้ดูดุดัน ล้ำสมัยสไตล์โปรเจกต์กู้ภัยภัยพิบัติ
+ctk.set_appearance_mode("Dark")
+ctk.set_default_color_theme("blue")
+
+class LoegisUI(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+
+        self.title("🚀 Loegis - ระบบจำลองการจัดเส้นทางเสบียงภาวะวิกฤต (Crisis Logistics)")
+        self.geometry("1280x720")
+
+        # --- การจัดการเลย์เอาต์หลัก (Sidebar & Map) ---
+        self.grid_columnconfigure(0, weight=1)  # แผงควบคุมด้านซ้าย (Sidebar)
+        self.grid_columnconfigure(1, weight=4)  # แผนที่ด้านขวา (Map Canvas)
+        self.grid_rowconfigure(0, weight=1)
+
+        # ================= แผงควบคุม (Sidebar Panel) =================
+        self.sidebar = ctk.CTkFrame(self, width=300, corner_radius=0)
+        self.sidebar.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        
+        self.title_label = ctk.CTkLabel(self.sidebar, text="LOEGIS CONTROL", font=ctk.CTkFont(size=20, weight="bold"))
+        self.title_label.pack(pady=20, padx=10)
+
+        # ปุ่มอัปโหลดแผนที่ GraphML
+        self.btn_upload = ctk.CTkButton(self.sidebar, text="📁 อัปโหลดไฟล์แผนที่ (.graphml)", command=self.upload_map)
+        self.btn_upload.pack(pady=10, padx=20, fill="x")
+
+        self.map_status = ctk.CTkLabel(self.sidebar, text="แผนที่ปัจจุบัน: hatyai_map.graphml", text_color="green")
+        self.map_status.pack(pady=5)
+
+        # ---- ส่วนปรับพารามิเตอร์ฝูงมด ACO ----
+        self.param_frame = ctk.CTkLabel(self.sidebar, text="⚙️ พารามิเตอร์ฝูงมด AI (ACO)", font=ctk.CTkFont(weight="bold"))
+        self.param_frame.pack(pady=10)
+
+        # Alpha Slider (ค่าน้ำหนักฟีโรโมน / สถิติเส้นทางเดิม)
+        self.alpha_label = ctk.CTkLabel(self.sidebar, text="Alpha (เน้นความเร็วเส้นทาง): 0.60")
+        self.alpha_label.pack()
+        self.alpha_slider = ctk.CTkSlider(self.sidebar, from_=0.0, to=1.0, command=self.update_alpha)
+        self.alpha_slider.set(0.6)
+        self.alpha_slider.pack(pady=5, padx=20, fill="x")
+
+        # Beta Slider (ค่าน้ำหนักความเสี่ยงน้ำท่วมหน้างาน)
+        self.beta_label = ctk.CTkLabel(self.sidebar, text="Beta (เน้นหลบน้ำท่วม): 0.40")
+        self.beta_label.pack()
+        self.beta_slider = ctk.CTkSlider(self.sidebar, from_=0.0, to=1.0, command=self.update_beta)
+        self.beta_slider.set(0.4)
+        self.beta_slider.pack(pady=5, padx=20, fill="x")
+
+        # ---- ส่วนตั้งค่าสถานการณ์ภัยพิบัติ ----
+        self.disaster_label = ctk.CTkLabel(self.sidebar, text="⚠️ จำลองสภาวะน้ำท่วมขัง", font=ctk.CTkFont(weight="bold"))
+        self.disaster_label.pack(pady=15)
+
+        self.radius_label = ctk.CTkLabel(self.sidebar, text="รัศมีน้ำท่วมขัง: 2.5 กม.")
+        self.radius_label.pack()
+        self.radius_slider = ctk.CTkSlider(self.sidebar, from_=1.0, to=10.0, command=self.update_radius)
+        self.radius_slider.set(2.5)
+        self.radius_slider.pack(pady=5, padx=20, fill="x")
+
+        # ปุ่มกดส่งพารามิเตอร์และเริ่มคำนวณผ่าน Java Engine
+        self.btn_run = ctk.CTkButton(self.sidebar, text="⚡ เริ่มประมวลผลระบบกู้ภัย", fg_color="green", hover_color="darkgreen", command=self.run_simulation)
+        self.btn_run.pack(pady=25, padx=20, fill="x")
+
+        # หน้าจอ Console Log สรุปผลลัพธ์ย่อยหลังการประมวลผล
+        self.log_label = ctk.CTkLabel(self.sidebar, text="📊 สรุปผลลัพธ์จาก Java Engine:", font=ctk.CTkFont(size=12, weight="bold"))
+        self.log_label.pack(pady=5)
+        self.txt_log = ctk.CTkTextbox(self.sidebar, height=140, width=260)
+        self.txt_log.pack(pady=5, padx=10)
+        self.txt_log.insert("0.0", "ระบบสแตนบาย... พร้อมรับอินพุตคำนวณเส้นทาง")
+
+        # ================= หน้าจอแผนที่ (Interactive Map Canvas) =================
+        self.map_frame = ctk.CTkFrame(self)
+        self.map_frame.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
+
+        # เรียกใช้แผนที่ผ่านไลบรารี ซูมเข้า-ออก และเลื่อนดูผังเมืองได้อิสระ
+        self.map_view = TkinterMapView(self.map_frame, corner_radius=10)
+        self.map_view.pack(fill="both", expand=True)
+        self.map_view.set_position(7.01, 100.47) # ปรับพิกัดศูนย์กลางไปที่หาดใหญ่
+        self.map_view.set_zoom(13)
+
+        # ปักหมุดโซนอันตรายน้ำท่วมขังสีแดง (แก้ไขปัญหาไม่มีแอตทริบิวต์ set_circle)
+        self.flood_marker = self.map_view.set_marker(7.01, 100.47, text="⚠️ โซนน้ำท่วมขัง (รัศมี 2.5 กม.)")
+        self.map_view.set_marker(7.018, 100.465, text="🏢 คลังเสบียงหลัก (Node 4970)")
+        self.map_view.set_marker(7.005, 100.475, text="⛺ ค่ายประสบภัย (Node 4957)")
+
+    # --- ฟังก์ชันกลุ่มอัปเดตข้อมูลบนหน้าจอเมื่อผู้ใช้เลื่อนสไลเดอร์ ---
+    def update_alpha(self, value):
+        self.alpha_label.configure(text=f"Alpha (เน้นความเร็วเส้นทาง): {value:.2f}")
+
+    def update_beta(self, value):
+        self.beta_label.configure(text=f"Beta (เน้นหลบน้ำท่วม): {value:.2f}")
+
+    def update_radius(self, value):
+        self.radius_label.configure(text=f"รัศมีน้ำท่วมขัง: {value:.1f} กม.")
+        # อัปเดตข้อความแจ้งเตือนขนาดรัศมีบนหมุดสีแดงแบบเรียลไทม์ตามนิ้วมือผู้ใช้
+        self.flood_marker.set_text(f"⚠️ โซนน้ำท่วมขัง (รัศมี {value:.1f} กม.)")
+
+    def upload_map(self):
+        # เปิดหน้าต่างให้ผู้ใช้เบราว์เลือกไฟล์แผนที่โครงข่ายในคอมพิวเตอร์
+        file_path = tk.filedialog.askopenfilename(filetypes=[("GraphML files", "*.graphml")])
+        if file_path:
+            filename = os.path.basename(file_path)
+            self.map_status.configure(text=f"แผนที่ปัจจุบัน: {filename}", text_color="blue")
+
+    # ================= ฟังก์ชันสั่งรันและข้ามระบบไปเรียกใช้ Java Engine หลังบ้าน =================
+    def run_simulation(self):
+        self.txt_log.delete("0.0", "end")
+        self.txt_log.insert("0.0", "[🔄 Processing] ส่งข้อมูลให้ Java Engine คำนวณ...")
+        self.update()
+
+        # 1. บันทึกค่าพารามิเตอร์ล่าสุดจาก UI ลงไฟล์ JSON เพื่อส่งเป็นอินพุตให้ Java
+        config_data = {
+            "alpha": self.alpha_slider.get(),
+            "beta": self.beta_slider.get(),
+            "flood_radius": self.radius_slider.get()
+        }
+        with open("ui_config.json", "w") as f:
+            json.dump(config_data, f)
+
+        try:
+            # --- 🕵️‍♂️ แผนล่าพาธ Java 21 ที่ซ่อนอยู่ในเครื่อง Windows ---
+            java_path = "java" # ค่าเริ่มต้น (ถ้าหาตัวใหม่ไม่เจอจะใช้ตัวนี้)
+            
+            # 1. ลองหาจากสิทธิ์ความเป็นเจ้าของของ JetBrains/IntelliJ
+            possible_paths = [
+                os.path.join(os.environ.get("PROGRAMFILES", "C:\\Program Files"), "Java\\jdk-21\\bin\\java.exe"),
+                os.path.join(os.environ.get("PROGRAMFILES", "C:\\Program Files"), "Java\\jdk-17\\bin\\java.exe"),
+                os.path.join(os.environ.get("LOCALAPPDATA", ""), "JetBrains\\Toolbox\\apps\\IDEA-U\\ch-0\\"), # เผื่อใช้ Toolbox
+            ]
+            
+            # 2. ค้นลึกเข้าไปในโฟลเดอร์แคชของ JetBrains JBR (Java ที่ติดมากับ IntelliJ)
+            appdata_roaming = os.environ.get("APPDATA", "")
+            jetbrains_path = os.path.join(appdata_roaming, "JetBrains")
+            if os.path.exists(jetbrains_path):
+                for root, dirs, files in os.walk(jetbrains_path):
+                    if "java.exe" in files and "bin" in root:
+                        possible_paths.append(os.path.join(root, "java.exe"))
+                        break
+
+            # 3. คัดกรองเอาเฉพาะไฟล์ Java ที่มีอยู่จริงในเครื่องมาใช้งาน
+            for path in possible_paths:
+                if os.path.exists(path):
+                    java_path = path
+                    break
+            
+            # พ่นบอกในคีย์เวิร์ดลับว่าเราใช้ Java จากไหนรัน
+            print(f"[🔍 System Check] กำลังใช้ Java จากตำแหน่งนี้รันคำนวณ: {java_path}")
+
+            # --- 🚀 สั่งรัน Java Engine ด้วยพาธที่เราล็อคเวอร์ชันไว้แล้ว ---
+            result = subprocess.run(
+                [java_path, "-cp", "out/production/loegis", "src.Main"], 
+                capture_output=True, text=True, check=True
+            )
+            
+            # 3. ดึง Log ที่ระบบประมวลผลสำเร็จมาตัดแสดงบนหน้าต่างกล่อง Textbox
+            java_output = result.stdout
+            self.txt_log.delete("0.0", "end")
+            
+            if java_output:
+                self.txt_log.insert("0.0", "🎉 คำนวณเสร็จสิ้น!\n" + java_output[-150:])
+            else:
+                self.txt_log.insert("0.0", "[✓] Java ทำงานสำเร็จแบบ Background")
+
+        except Exception as e:
+            self.txt_log.delete("0.0", "end")
+            # ถ้าพัง จะดักเอา Log เออเร่อดิบ ๆ จากฝั่ง Java มาพ่นโชว์บนหน้าจอ UI เลย จะได้เห็นไส้ในชัด ๆ
+            error_msg = str(e)
+            if hasattr(e, 'stderr') and e.stderr:
+                error_msg += f"\n\n[Java Error Output]:\n{e.stderr}"
+            self.txt_log.insert("0.0", f"❌ ไม่สามารถติดต่อ Java Engine ได้\nDetail: {error_msg}")
+            
+            # 3. ดึง Log ที่ระบบประมวลผลสำเร็จมาตัดแสดงบนหน้าต่างกล่อง Textbox
+            java_output = result.stdout
+            self.txt_log.delete("0.0", "end")
+            
+            if java_output:
+                # แสดงผลสรุปช่วง 150 ตัวอักษรสุดท้ายที่ประมวลผลสำเร็จ
+                self.txt_log.insert("0.0", "🎉 คำนวณเสร็จสิ้น!\n" + java_output[-150:])
+            else:
+                self.txt_log.insert("0.0", "[✓] Java ทำงานสำเร็จแบบ Background")
+
+        except Exception as e:
+            self.txt_log.delete("0.0", "end")
+            self.txt_log.insert("0.0", f"\n[❌ Error] ไม่สามารถติดต่อ Java Engine ได้\nกรุณาเช็คพาธโฟลเดอร์คลาสคลังสคริปต์\nDetail: {str(e)}")
+
+if __name__ == "__main__":
+    app = LoegisUI()
+    app.mainloop()
