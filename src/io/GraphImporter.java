@@ -3,6 +3,7 @@ package src.io;
 import src.model.CrisisGraph;
 import src.model.Node;
 import src.model.Edge;
+
 import org.jgrapht.Graph;
 import org.jgrapht.graph.DirectedPseudograph;
 import org.jgrapht.nio.graphml.GraphMLImporter;
@@ -13,20 +14,50 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Supplier;
 
+/**
+ * GraphImporter
+ * -------------
+ * คลาสนี้ใช้สำหรับอ่านไฟล์แผนที่ .graphml ที่ export มาจาก OSMnx / OpenStreetMap
+ * แล้วแปลงข้อมูลเป็น CrisisGraph ที่ระบบ Loegis ใช้งานได้
+ *
+ * สิ่งที่คลาสนี้ทำ:
+ *   1. อ่านไฟล์ GraphML
+ *   2. ดึงพิกัดของ node จากค่า x / y
+ *      - x = longitude
+ *      - y = latitude
+ *   3. สร้าง Node ลงใน CrisisGraph
+ *   4. สร้าง Edge หรือถนนลงใน CrisisGraph
+ *   5. รองรับ Emergency Mode:
+ *      - respectOneWay = true  → เคารพทิศทางถนนจริง / One-way
+ *      - respectOneWay = false → สร้างถนนย้อนกลับเพิ่ม เพื่อให้รถกู้ภัยย้อนศรได้
+ */
 public class GraphImporter {
 
-    public static CrisisGraph importMap(String filepath) {
+    /**
+     * โหลดแผนที่โดยกำหนดว่าจะเคารพ One-way หรือไม่
+     *
+     * @param filepath       path ของไฟล์ .graphml
+     * @param respectOneWay  true = เคารพ One-way, false = Emergency Mode / ย้อนศรได้
+     */
+    public static CrisisGraph importMap(String filepath, boolean respectOneWay) {
         System.out.println("[+] กำลังเปิดอ่านไฟล์แผนที่จาก: " + filepath);
+        System.out.println("[🚦 Traffic Mode] respectOneWay = " + respectOneWay);
 
         CrisisGraph crisisGraph = new CrisisGraph();
 
-        // ✅ ใช้ SupplierUtil สร้าง id ใหม่ไม่ซ้ำกันทุกครั้งที่ importer เรียก addVertex()
-        //    (ห้ามใช้ () -> "" เพราะจะคืนค่าซ้ำตัวเดิมตลอด ทำให้ addVertex() ตัวที่ 2 เป็นต้นไปถูกมองว่าซ้ำแล้วถูกข้ามแบบเงียบ ๆ)
+        /*
+         * Supplier สำหรับสร้าง id ของ vertex ชั่วคราวใน JGraphT
+         *
+         * ห้ามใช้ () -> "" เพราะจะคืนค่า id ซ้ำทุกครั้ง
+         * ถ้า id ซ้ำ vertex ตัวหลัง ๆ จะถูกมองว่าเป็นตัวเดิม
+         */
         Supplier<String> vertexSupplier = SupplierUtil.createStringSupplier();
 
-        // ✅ ใช้ DirectedPseudograph แทน SimpleDirectedGraph เพราะข้อมูลถนนจริงจาก OSMnx
-        //    มักมี self-loop (ถนนวนกลับจุดเดิม เช่น roundabout เล็ก ๆ หรือ noise จาก OSM)
-        //    SimpleDirectedGraph จะ throw "loops not allowed" ทันทีที่เจอ edge แบบนี้
+        /*
+         * ใช้ DirectedPseudograph เพราะข้อมูลถนนจริงจาก OSMnx
+         * อาจมี edge หลายเส้นระหว่าง node คู่เดียวกัน
+         * และอาจมี self-loop บางกรณี
+         */
         Graph<String, org.jgrapht.graph.DefaultEdge> tempGraph =
                 new DirectedPseudograph<>(
                         vertexSupplier,
@@ -34,21 +65,34 @@ public class GraphImporter {
                         false
                 );
 
-        GraphMLImporter<String, org.jgrapht.graph.DefaultEdge> importer = new GraphMLImporter<>();
+        GraphMLImporter<String, org.jgrapht.graph.DefaultEdge> importer =
+                new GraphMLImporter<>();
 
-        // 🔥 จุดสำคัญ: สั่งปิดการตรวจสอบ Schema เพื่อข้ามเออเร่อ "Duplicate unique value [0]"
-        //    (OSMnx export edge id ซ้ำได้ตามธรรมชาติ เช่น ถนนสองทิศทางบนเส้นเดียวกัน)
+        /*
+         * ปิด schema validation
+         *
+         * เหตุผล:
+         * ไฟล์จาก OSMnx บางครั้งมี id ของ edge ซ้ำ
+         * ถ้าเปิด schema validation อาจเจอ error เช่น Duplicate unique value
+         */
         importer.setSchemaValidation(false);
 
-        // ตัวช่วยจำพิกัดชั่วขณะขณะพาร์สไฟล์ XML
+        /*
+         * เก็บพิกัดของ node ชั่วคราวระหว่าง import
+         *
+         * lats = nodeId -> latitude
+         * lons = nodeId -> longitude
+         */
         Map<String, Double> lats = new HashMap<>();
         Map<String, Double> lons = new HashMap<>();
 
-        // คอยแกะค่า x (Longitude) และ y (Latitude) ที่ OSMnx เซฟมาในไฟล์
-        // Signature จริง: BiConsumer<Pair<V, String>, Attribute>
-        //   - p.getFirst()  -> V (vertex id)        ใช้ตรง ๆ
-        //   - p.getSecond() -> String (ชื่อ attribute เช่น "x", "y")  ใช้ตรง ๆ ไม่ต้อง .getName()
-        //   - attr          -> Attribute object     ต้องเรียก .getValue() เพื่อเอาค่าออกมา
+        /*
+         * อ่าน attribute ของ vertex จาก GraphML
+         *
+         * ในไฟล์ OSMnx:
+         *   y = latitude
+         *   x = longitude
+         */
         importer.addVertexAttributeConsumer((p, attr) -> {
             String nodeId = p.getFirst();
             String attrName = p.getSecond();
@@ -63,34 +107,44 @@ public class GraphImporter {
 
         try {
             File file = new File(filepath);
+
             if (!file.exists()) {
                 System.out.println("[❌ Error] หาไฟล์ไม่เจอในพิกัด: " + file.getAbsolutePath());
                 return crisisGraph;
             }
 
-            // อ่านไฟล์เข้ากราฟชั่วคราว
+            /*
+             * อ่านไฟล์ GraphML เข้าสู่ tempGraph ก่อน
+             */
             importer.importGraph(tempGraph, file);
 
-            // ย้ายข้อมูลโหนดเข้าสู่ระบบ CrisisGraph
+            /*
+             * แปลง vertex ใน tempGraph เป็น Node ของระบบ Loegis
+             */
             for (String vId : tempGraph.vertexSet()) {
                 double lat = lats.getOrDefault(vId, 0.0);
                 double lon = lons.getOrDefault(vId, 0.0);
 
-                // ⚠️ เช็คลำดับ parameter ของ constructor Node ให้ตรงกับนิยามจริงในคลาส model.Node
-                //    (โค้ดนี้สมมุติว่าเป็น (id, lat, lon) ตามที่เขียนไว้เดิม)
                 Node node = new Node(vId, lat, lon);
                 crisisGraph.addNode(node);
             }
 
-            // ย้ายข้อมูลถนนและรัน ID ใหม่เพื่อความปลอดภัย
+            /*
+             * แปลง edge ใน tempGraph เป็น Edge ของระบบ Loegis
+             */
             int edgeCounter = 0;
             int skippedSelfLoops = 0;
+
             for (org.jgrapht.graph.DefaultEdge e : tempGraph.edgeSet()) {
                 String sourceId = tempGraph.getEdgeSource(e);
                 String targetId = tempGraph.getEdgeTarget(e);
 
-                // ⛔ ข้าม self-loop (ถนนที่วนกลับจุดเริ่มต้นเดิม) เพราะไม่มีประโยชน์
-                //    ต่อการคำนวณเส้นทางด้วย Ant Colony Optimization
+                /*
+                 * ข้าม self-loop
+                 *
+                 * self-loop คือถนนที่ source == target
+                 * ไม่มีประโยชน์กับการหาเส้นทางจากจุดหนึ่งไปอีกจุดหนึ่ง
+                 */
                 if (sourceId.equals(targetId)) {
                     skippedSelfLoops++;
                     continue;
@@ -100,18 +154,66 @@ public class GraphImporter {
                 Node targetNode = crisisGraph.getNode(targetId);
 
                 if (sourceNode != null && targetNode != null) {
-                    // กำหนดระยะทางสมมุติเริ่มต้น 150 เมตร หรือจะดึงค่าจริงมาคิดภายหลังได้
-                    Edge edge = new Edge("e_" + edgeCounter++, sourceNode, targetNode, 150.0);
+
+                    /*
+                     * 1) สร้างถนนหลักตามทิศทางจริงจาก OSM
+                     *
+                     * ถ้า OSM บอกว่า A -> B
+                     * ระบบจะเพิ่ม edge A -> B
+                     *
+                     * ตรงนี้สำคัญมาก ห้ามคอมเมนต์ออก
+                     */
+                    // ==========================
+// ถนนจริง
+// ==========================
+                    Edge edge = new Edge(
+                            "e_" + edgeCounter++,
+                            sourceNode,
+                            targetNode,
+                            150.0
+                    );
+
+                    edge.setReverseEdge(false);
+                    edge.setTrafficAllowed(true);
+
                     crisisGraph.addEdge(edge);
+
+// ==========================
+// ถนนย้อนศร
+// สร้างไว้ตลอด
+// ==========================
+                    Edge reverseEdge = new Edge(
+                            "e_" + edgeCounter++,
+                            targetNode,
+                            sourceNode,
+                            150.0
+                    );
+
+                    reverseEdge.setReverseEdge(true);
+
+// เริ่มต้นปิดไว้
+                    reverseEdge.setTrafficAllowed(false);
+
+                    crisisGraph.addEdge(reverseEdge);
                 }
             }
 
             if (skippedSelfLoops > 0) {
-                System.out.println("[ℹ️ Info] ข้าม self-loop ไป " + skippedSelfLoops + " เส้น (ถนนที่วนกลับจุดเดิม)");
+                System.out.println("[ℹ️ Info] ข้าม self-loop ไป "
+                        + skippedSelfLoops
+                        + " เส้น");
             }
 
-            System.out.println("[🎉 Success] อ่านและแปลงไฟล์ผังเมืองเข้าสู่ระบบโมเดลสำเร็จ! จำนวนโหนด: "
-                    + tempGraph.vertexSet().size() + ", จำนวนถนน: " + tempGraph.edgeSet().size());
+            /*
+             * ใช้ crisisGraph.getAllEdges().size()
+             * เพราะถ้า Emergency Mode เปิดอยู่
+             * จำนวนถนนจะรวม reverse edge แล้ว
+             */
+            System.out.println("[🎉 Success] อ่านและแปลงไฟล์ผังเมืองสำเร็จ!");
+            System.out.println("    จำนวนโหนด: " + crisisGraph.getAllNodes().size());
+            System.out.println("    จำนวนถนนในระบบ: " + crisisGraph.getAllEdges().size());
+            System.out.println("    โหมดการจราจร: "
+                    + (respectOneWay ? "เคารพ One-way" : "Emergency Mode / ย้อนศรได้"));
 
         } catch (Exception e) {
             System.out.println("[❌ Error] เกิดข้อผิดพลาดขณะพาร์สไฟล์ GraphML: " + e.getMessage());
@@ -119,5 +221,16 @@ public class GraphImporter {
         }
 
         return crisisGraph;
+    }
+
+    /**
+     * Overload สำหรับโค้ดเก่าที่ยังเรียก importMap(filepath)
+     *
+     * ค่าเริ่มต้น:
+     *   respectOneWay = true
+     * แปลว่าใช้การจราจรจริง / เคารพ One-way
+     */
+    public static CrisisGraph importMap(String filepath) {
+        return importMap(filepath, true);
     }
 }

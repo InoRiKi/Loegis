@@ -1,21 +1,21 @@
 <!DOCTYPE html>
 <html lang="th">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Crisis Logistics — ระบบจำลองการจัดเส้นทางเสบียงภาวะวิกฤต</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Crisis Logistics — ระบบจำลองการจัดเส้นทางเสบียงภาวะวิกฤต</title>
 
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-<link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
 
 <div id="app">
 
-  <!-- ====================== TOP BAR ====================== -->
   <header id="topbar">
     <div class="brand">
       <span class="brand-mark">⛑</span>
@@ -24,6 +24,7 @@
         <div class="brand-sub">ระบบจำลองการจัดเส้นทางเสบียงภาวะวิกฤต</div>
       </div>
     </div>
+
     <div id="connection-status" class="status-pill status-unknown">
       <span class="dot"></span> กำลังเชื่อมต่อ...
     </div>
@@ -31,43 +32,91 @@
 
   <div id="main-layout">
 
-    <!-- ====================== SIDEBAR ====================== -->
     <aside id="sidebar">
 
       <div class="panel" id="panel-mode">
         <div class="panel-header">🖱️ โหมดคลิกบนแผนที่</div>
+
         <div class="panel-body">
           <div class="mode-buttons">
             <button class="mode-btn active" data-mode="none" id="mode-none">เลื่อนแผนที่</button>
             <button class="mode-btn" data-mode="depot" id="mode-depot">📍 ตั้งคลังเสบียง</button>
             <button class="mode-btn" data-mode="camp" id="mode-camp">📍 ตั้งค่ายผู้ประสบภัย</button>
+            <button class="mode-btn" data-mode="rescue" id="mode-rescue">
+              🆘 ตั้งผู้ประสบภัย
+            </button>
           </div>
+
           <p class="hint">เลือกโหมดแล้วคลิกจุดบนแผนที่เพื่อกำหนดตำแหน่ง</p>
         </div>
       </div>
 
       <div class="panel" id="panel-map-file">
         <div class="panel-header">🗺️ ไฟล์แผนที่ (.graphml)</div>
+
         <div class="panel-body">
           <input type="text" id="map-file-path" value="hatyai_map.graphml" />
           <button class="btn-block" id="btn-load-map">โหลดแผนที่</button>
         </div>
       </div>
 
+      <label>
+        โหมดการจราจร
+        <select id="traffic-mode">
+          <option value="true" selected>เปิดการจราจรจริง — เคารพ One-way</option>
+          <option value="false">Emergency Mode — รถกู้ภัยย้อนศรได้</option>
+        </select>
+      </label>
+
       <div class="panel collapsible" id="panel-flood">
-        <div class="panel-header">🌊 จุดน้ำท่วม (Disaster Zone)</div>
+        <div class="panel-header">🌊 จุดน้ำท่วมหลายระดับ</div>
+
         <div class="panel-body">
-          <label>Latitude <input type="number" step="0.0001" id="flood-lat" value="7.0100"></label>
-          <label>Longitude <input type="number" step="0.0001" id="flood-lon" value="100.4700"></label>
-          <label>รัศมี (กม.) <input type="number" step="0.1" id="flood-radius" value="2.5"></label>
-          <p class="hint">คลิก "📍 ตั้งจุดน้ำท่วม" แล้วคลิกบนแผนที่ เพื่อกำหนดพิกัดแบบรวดเร็ว</p>
-          <button class="btn-block btn-secondary" id="mode-flood">📍 ตั้งจุดน้ำท่วมจากแผนที่</button>
-          <button class="btn-block btn-danger" id="btn-simulate-flood">จำลองน้ำท่วม</button>
+          <label>
+            Latitude
+            <input type="number" step="0.0001" id="flood-lat" value="7.0100">
+          </label>
+
+          <label>
+            Longitude
+            <input type="number" step="0.0001" id="flood-lon" value="100.4700">
+          </label>
+
+          <label>
+            รัศมี (กม.)
+            <input type="number" step="0.1" id="flood-radius" value="1.0">
+          </label>
+
+          <label>
+            ระดับน้ำท่วม
+            <select id="flood-level">
+              <option value="SHALLOW">ตื้น — รถผ่านได้ แต่ช้าลง</option>
+              <option value="MEDIUM" selected>กลาง — รถผ่านได้ แต่ช้าลงมาก</option>
+              <option value="DEEP">ลึก — รถผ่านไม่ได้</option>
+            </select>
+          </label>
+
+          <p class="hint">
+            เลือกระดับน้ำ แล้วกด “ตั้งจุดน้ำท่วมจากแผนที่” จากนั้นคลิกบนแผนที่ได้หลายจุด
+          </p>
+
+          <button class="btn-block btn-secondary" id="mode-flood">
+            📍 ตั้งจุดน้ำท่วมจากแผนที่
+          </button>
+
+          <button class="btn-block btn-danger" id="btn-simulate-flood">
+            เพิ่มจุดน้ำท่วมจากค่าด้านบน
+          </button>
+
+          <button class="btn-block btn-secondary" id="btn-clear-flood">
+            ล้างจุดน้ำท่วมทั้งหมด
+          </button>
         </div>
       </div>
 
       <div class="panel collapsible" id="panel-demand">
         <div class="panel-header">⛺ ความต้องการของค่ายผู้ประสบภัย</div>
+
         <div class="panel-body">
           <label>น้ำ (แพ็ค) <input type="number" id="demand-water" value="500"></label>
           <label>เวชภัณฑ์ (ชุด) <input type="number" id="demand-medical" value="50"></label>
@@ -78,6 +127,7 @@
 
       <div class="panel collapsible" id="panel-fleet">
         <div class="panel-header">🚚 กองรถกู้ภัย (Fleet)</div>
+
         <div class="panel-body">
           <label>จำนวนรถ <input type="number" id="fleet-size" value="2" min="1"></label>
           <label>ความสามารถบรรทุก (กก.) <input type="number" id="vehicle-capacity" value="1000"></label>
@@ -85,33 +135,84 @@
         </div>
       </div>
 
-      <div class="panel collapsible" id="panel-aco">
-        <div class="panel-header">🤖 Ant Colony Optimization</div>
+      <div class="panel">
         <div class="panel-body">
-          <label>Alpha (น้ำหนักความเร็ว) <input type="number" step="0.1" id="aco-alpha" value="0.6"></label>
-          <label>Beta (น้ำหนักความปลอดภัย) <input type="number" step="0.1" id="aco-beta" value="0.4"></label>
-          <label>จำนวนรอบ (iterations) <input type="number" id="aco-iterations" value="100" min="1"></label>
-          <button class="btn-block btn-primary" id="btn-run-aco">🚀 หาเส้นทางที่ดีที่สุด</button>
+
+          <button
+                  class="btn-block btn-primary"
+                  id="btn-run-route">
+
+            🚀 หาเส้นทางเลี่ยงที่ดีที่สุด
+
+          </button>
+
         </div>
+      </div>
+
+      <div class="panel collapsible" id="panel-aco">
+
+        <div class="panel-header">
+          🚑 ระบบวางแผนกู้ภัยอัจฉริยะ
+        </div>
+
+        <div class="panel-body">
+
+          <p class="hint">
+            ระบบจะคำนวณลำดับการช่วยเหลือผู้ประสบภัย
+            โดยคำนึงถึงความปลอดภัย ระยะทาง
+            และระดับน้ำท่วม
+          </p>
+
+          <button
+                  class="btn-block btn-primary"
+                  id="btn-run-aco">
+
+            🚨 วางแผนช่วยเหลือผู้ประสบภัย
+
+          </button>
+
+        </div>
+
       </div>
 
       <div class="panel">
         <div class="panel-body">
-          <button class="btn-block btn-reset" id="btn-reset">🔄 รีเซ็ตการจำลองทั้งหมด</button>
+          <button class="btn-block btn-reset" id="btn-reset">
+            🔄 รีเซ็ตการจำลองทั้งหมด
+          </button>
         </div>
       </div>
 
     </aside>
 
-    <!-- ====================== MAP ====================== -->
     <main id="map-container">
       <div id="map"></div>
 
       <div id="map-overlay-stats">
-        <div class="stat"><span class="stat-label">โหนด</span><span class="stat-value" id="stat-nodes">—</span></div>
-        <div class="stat"><span class="stat-label">ถนน</span><span class="stat-value" id="stat-edges">—</span></div>
-        <div class="stat"><span class="stat-label">ถนนเสี่ยง</span><span class="stat-value stat-danger" id="stat-risk">—</span></div>
-        <div class="stat"><span class="stat-label">ต้นทุนเส้นทาง</span><span class="stat-value stat-accent" id="stat-cost">—</span></div>
+        <div class="stat">
+          <span class="stat-label">โหนด</span>
+          <span class="stat-value" id="stat-nodes">—</span>
+        </div>
+
+        <div class="stat">
+          <span class="stat-label">ถนน</span>
+          <span class="stat-value" id="stat-edges">—</span>
+        </div>
+
+        <div class="stat">
+          <span class="stat-label">ถนนเสี่ยง</span>
+          <span class="stat-value stat-danger" id="stat-risk">—</span>
+        </div>
+
+        <div class="stat">
+          <span class="stat-label">ถนนปิด</span>
+          <span class="stat-value stat-danger" id="stat-blocked">—</span>
+        </div>
+
+        <div class="stat">
+          <span class="stat-label">ต้นทุนเส้นทาง</span>
+          <span class="stat-value stat-accent" id="stat-cost">—</span>
+        </div>
       </div>
 
       <div id="map-legend">
@@ -123,12 +224,12 @@
       </div>
     </main>
 
-    <!-- ====================== LOG CONSOLE ====================== -->
     <section id="log-console">
       <div class="log-header">
         <span>📜 LOG การทำงาน</span>
         <button id="btn-clear-log">ล้าง</button>
       </div>
+
       <div id="log-lines"></div>
     </section>
 
@@ -137,5 +238,6 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="app.js"></script>
+
 </body>
 </html>

@@ -33,7 +33,10 @@ public class AntColonyRouter {
     private static final double PHEROMONE_INFLUENCE = 1.0;
     private static final double HEURISTIC_INFLUENCE = 2.0; // เน้น heuristic (ความเร็ว+ความปลอดภัย) มากกว่า pheromone
     private static final double EVAPORATION_RATE = 0.1;
-    private static final int MAX_STEPS_MULTIPLIER = 3; // กันมดเดินวนไม่จบ (คูณกับจำนวนโหนดทั้งหมด)
+    private static final double DEFAULT_ALPHA = 0.6;
+    private static final double DEFAULT_BETA = 0.4;
+    private static final int DEFAULT_ITERATIONS = 500;
+    private static final int MAX_STEPS_MULTIPLIER = 20; // กันมดเดินวนไม่จบ (คูณกับจำนวนโหนดทั้งหมด)
     private static final double EPSILON = 1e-6;
 
     private final CrisisGraph graph;
@@ -137,7 +140,7 @@ public class AntColonyRouter {
         while (currentNode != null && !currentNode.getId().equals(destination.getId()) && steps < maxSteps) {
 
             List<Edge> availableEdges = adjacency.getOrDefault(currentNode.getId(), List.of()).stream()
-                    .filter(e -> !visitedNodes.contains(e.getTarget().getId()))
+                    .filter(e -> e.isPassable())
                     .toList();
 
             if (availableEdges.isEmpty()) {
@@ -176,8 +179,11 @@ public class AntColonyRouter {
             double pheromone = pheromoneMap.getOrDefault(edge.getId(), 1.0);
             double dynamicWeight = edge.getDynamicWeight(alpha, beta);
 
+
+            double safety = edge.getSafetyScore();
+            if (safety <= 0) continue;
             // heuristic: ยิ่งต้นทุน (เวลา+ความเสี่ยง) ต่ำ ยิ่งน่าดึงดูด
-            double heuristic = 1.0 / (dynamicWeight + EPSILON);
+            double heuristic = safety / (dynamicWeight + EPSILON);
 
             double score = Math.pow(pheromone, PHEROMONE_INFLUENCE) * Math.pow(heuristic, HEURISTIC_INFLUENCE);
 

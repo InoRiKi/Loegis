@@ -3,45 +3,164 @@ package src.simulation;
 import src.model.CrisisGraph;
 import src.model.Edge;
 
+import java.util.List;
+
+/**
+ * DisasterSimulator
+ * -----------------
+ * ใช้จำลองน้ำท่วมบนโครงข่ายถนน
+ *
+ * เวอร์ชันนี้รองรับ "น้ำท่วมหลายจุด"
+ * โดยแต่ละจุดสามารถกำหนดระดับน้ำได้เอง:
+ *   - SHALLOW = น้ำตื้น
+ *   - MEDIUM  = น้ำระดับกลาง
+ *   - DEEP    = น้ำลึกจนรถผ่านไม่ได้
+ *
+ * ถ้าถนนเส้นเดียวโดนหลายจุดน้ำท่วมพร้อมกัน
+ * ระบบจะเลือก "ระดับที่รุนแรงที่สุด" ให้ถนนเส้นนั้น
+ */
 public class DisasterSimulator {
 
-    /**
-     * ฟังก์ชันคำนวณระยะทางแบบเส้นตรงระหว่างพิกัดดาวเทียม (Haversine Formula)
-     * เอาไว้ใช้วัดว่าถนนเส้นนั้นอยู่ใกล้จุดน้ำท่วมกี่กิโลเมตร
-     */
+    public enum FloodLevel {
+        SHALLOW,
+        MEDIUM,
+        DEEP
+    }
+
     private static double calculateDistance(double lat1, double lon1, double lat2, double lon2) {
-        final int R = 6371; // รัศมีของโลก (กิโลเมตร)
+        final int R = 6371;
+
         double latDistance = Math.toRadians(lat2 - lat1);
         double lonDistance = Math.toRadians(lon2 - lon1);
+
         double a = Math.sin(latDistance / 2) * Math.sin(latDistance / 2)
                 + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
                 * Math.sin(lonDistance / 2) * Math.sin(lonDistance / 2);
+
         double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
         return R * c;
     }
 
-    /**
-     * สั่งจำลองเขตน้ำท่วมขัง: ถ้าถนนเส้นไหนอยู่ในรัศมี จะทำให้รถวิ่งช้าลงและเสี่ยงขึ้น
-     */
-    public static void simulateFloodZone(CrisisGraph graph, double floodLat, double floodLon, double radiusKm) {
-        System.out.println("[⚠️] กำลังจำลองสภาวะน้ำท่วม ณ พิกัด (" + floodLat + ", " + floodLon + ") รัศมี " + radiusKm + " กม.");
+    private static int levelSeverity(FloodLevel level) {
+        return switch (level) {
+            case SHALLOW -> 1;
+            case MEDIUM -> 2;
+            case DEEP -> 3;
+        };
+    }
 
-        int affectedEdges = 0;
+    private static void applyLevelToEdge(Edge edge, FloodLevel level) {
+        switch (level) {
+            case SHALLOW -> {
+                edge.setRiskLevel(0.3);
+                edge.setTravelTimeFactor(1.5);
+                edge.setPassable(true); // รถผ่านได้
+            }
 
-        for (Edge edge : graph.getAllEdges().values()) {
-            // หาพิกัดกึ่งกลางของถนนเส้นนั้นๆ
-            double edgeLat = (edge.getSource().getLatitude() + edge.getTarget().getLatitude()) / 2.0;
-            double edgeLon = (edge.getSource().getLongitude() + edge.getTarget().getLongitude()) / 2.0;
+            case MEDIUM -> {
+                edge.setRiskLevel(0.6);
+                edge.setTravelTimeFactor(2.5);
+                edge.setPassable(true); // ยังผ่านได้ แต่ควรใช้เรือ
+            }
 
-            double distanceToFlood = calculateDistance(floodLat, floodLon, edgeLat, edgeLon);
-
-            // ถ้าถนนอยู่ในโซนน้ำท่วม ให้เพิ่มค่าความเสี่ยงและเวลาเดินทางช้าลง
-            if (distanceToFlood <= radiusKm) {
-                edge.setTravelTimeFactor(4.0); // รถวิ่งช้าลง 4 เท่า
-                edge.setRiskLevel(0.7);        // ความเสี่ยงระดับสูง 0.7
-                affectedEdges++;
+            case DEEP -> {
+                edge.setRiskLevel(1.0);
+                edge.setTravelTimeFactor(3.5);
+                edge.setPassable(true); // เรือผ่านได้
             }
         }
-        System.out.println("[✓] มีเส้นทางถนนได้รับผลกระทบจากน้ำท่วมขังทั้งหมด: " + affectedEdges + " เส้นทาง");
+    }
+
+    /**
+     * จำลองน้ำท่วม 1 จุด
+     * ใช้ได้เหมือนระบบเดิม แต่เพิ่ม level เข้าไป
+     */
+    public static void simulateFloodZone(
+            CrisisGraph graph,
+            double floodLat,
+            double floodLon,
+            double radiusKm,
+            FloodLevel level
+    ) {
+        simulateFloodZones(
+                graph,
+                List.of(new FloodZone(floodLat, floodLon, radiusKm, level))
+        );
+    }
+
+    /**
+     * จำลองน้ำท่วมหลายจุด
+     *
+     * หลักการ:
+     *   1. รีเซ็ตถนนทั้งหมดให้กลับเป็นปกติก่อน
+     *   2. วนดูถนนทุกเส้น
+     *   3. เช็กว่าถนนเส้นนั้นอยู่ในรัศมีของ FloodZone จุดไหนบ้าง
+     *   4. ถ้าโดนหลายจุด ให้ใช้ระดับที่รุนแรงที่สุด
+     *   5. นำระดับนั้นไปปรับค่า risk / time / passable ของถนน
+     */
+    public static void simulateFloodZones(CrisisGraph graph, List<FloodZone> zones) {
+        if (graph == null || zones == null || zones.isEmpty()) {
+            System.out.println("[⚠️] ไม่มีข้อมูลจุดน้ำท่วมสำหรับจำลอง");
+            return;
+        }
+
+        graph.resetGraphEnvironment();
+
+        int affectedEdges = 0;
+        int blockedEdges = 0;
+
+        for (Edge edge : graph.getAllEdges().values()) {
+            double edgeLat = (edge.getSource().getLatitude()
+                    + edge.getTarget().getLatitude()) / 2.0;
+
+            double edgeLon = (edge.getSource().getLongitude()
+                    + edge.getTarget().getLongitude()) / 2.0;
+
+            FloodLevel strongestLevel = null;
+
+            for (FloodZone zone : zones) {
+                double distanceToFlood = calculateDistance(
+                        zone.getLatitude(),
+                        zone.getLongitude(),
+                        edgeLat,
+                        edgeLon
+                );
+
+                if (distanceToFlood <= zone.getRadiusKm()) {
+                    if (strongestLevel == null
+                            || levelSeverity(zone.getLevel()) > levelSeverity(strongestLevel)) {
+                        strongestLevel = zone.getLevel();
+                    }
+                }
+            }
+
+            if (strongestLevel != null) {
+                applyLevelToEdge(edge, strongestLevel);
+                affectedEdges++;
+
+                if (!edge.isPassable()) {
+                    blockedEdges++;
+                }
+            }
+        }
+
+        System.out.println("[✓] จำลองน้ำท่วมหลายจุดสำเร็จ");
+        System.out.println("[✓] จำนวนจุดน้ำท่วม: " + zones.size() + " จุด");
+        System.out.println("[✓] ถนนได้รับผลกระทบทั้งหมด: " + affectedEdges + " เส้น");
+        System.out.println("[⛔] ถนนที่รถผ่านไม่ได้: " + blockedEdges + " เส้น");
+    }
+
+    /**
+     * กันโค้ดเก่าเรียกแล้วพัง
+     * ถ้าไม่ได้ระบุระดับน้ำ จะใช้ MEDIUM เป็นค่าเริ่มต้น
+     */
+    public static void simulateFloodZone(
+            CrisisGraph graph,
+            double floodLat,
+            double floodLon,
+            double radiusKm
+    ) {
+        simulateFloodZone(graph, floodLat, floodLon, radiusKm, FloodLevel.MEDIUM);
     }
 }

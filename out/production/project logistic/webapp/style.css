@@ -449,3 +449,52 @@ button {
   #map-container { grid-column: 1; grid-row: 2; }
   #log-console { grid-column: 1; grid-row: 3; }
 }
+/* ===============================
+   CUSTOM DROPDOWN STYLE
+================================ */
+
+select {
+  width: 100%;
+  padding: 10px 12px;
+  margin-top: 6px;
+  margin-bottom: 10px;
+
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 10px;
+
+  background: linear-gradient(180deg, #111827, #0f172a);
+  color: #e5e7eb;
+
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 500;
+
+  outline: none;
+  cursor: pointer;
+  transition: 0.2s ease;
+}
+
+select:hover {
+  border-color: var(--accent-cyan);
+  box-shadow: 0 0 0 2px rgba(63, 211, 224, 0.15);
+}
+
+select:focus {
+  border-color: var(--accent-cyan);
+  box-shadow: 0 0 0 3px rgba(63, 211, 224, 0.22);
+}
+
+select option {
+  background: #0f172a;
+  color: #e5e7eb;
+}
+
+#traffic-mode {
+  border-color: rgba(96, 165, 250, 0.5);
+  background: linear-gradient(180deg, #172554, #0f172a);
+}
+
+#flood-level {
+  border-color: rgba(45, 212, 191, 0.5);
+  background: linear-gradient(180deg, #134e4a, #0f172a);
+}
